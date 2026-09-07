@@ -6,6 +6,16 @@ A **Clyvo Vet API** é o backend responsável por sustentar a infraestrutura de 
 
 ---
 
+## 🚀 Novidades da Sprint 3: Monitoramento, Observabilidade e Testes
+
+Nesta sprint, a arquitetura da aplicação foi evoluída para incluir resiliência e qualidade de código, garantindo as melhores práticas de mercado:
+
+* **Monitoramento (Health Checks):** Implementação de checagem de saúde da conexão com o banco de dados Oracle e validação de disponibilidade de serviços externos.
+* **Observabilidade (Serilog & OpenTelemetry):** Configuração de logging estruturado. A saída dos logs ocorre tanto no console quanto em arquivos físicos diários (pasta `/logs`). Adicionalmente, foi integrado o OpenTelemetry para tracing distribuído e extração de métricas de desempenho.
+* **Testes Automatizados:** Criação de projetos de testes separados por camadas (`UnitTests` e `IntegrationTests`). A validação das regras de negócio e endpoints foi construída seguindo rigorosamente o padrão AAA (Arrange, Act, Assert), utilizando xUnit, WebApplicationFactory e Moq para simulação de dependências.
+
+---
+
 # 🛠️ Instruções de Instalação e Execução
 
 ## Pré-requisitos
@@ -52,9 +62,26 @@ Abra o navegador e acesse a documentação interativa da API:
 
 👉 `http://localhost:5134/swagger`
 
+### 5. Como Executar os Testes Automatizados 🧪
+
+A aplicação conta com cobertura de testes unitários (camadas internas) e testes de integração (camada HTTP). Para rodar toda a bateria de testes, abra o terminal na raiz da solução do projeto e execute:
+
+```bash
+dotnet test
+```
+
 ---
 
 # 🛣️ Documentação das Rotas (Endpoints)
+
+## 🩺 Monitoramento / Health Check (`/health`)
+
+**Métodos:** `GET`
+
+**Descrição:**  
+Retorna o status de saúde da API, verificando a conectividade com o banco de dados e serviços externos. O retorno é um JSON estruturado indicando o status geral (`Healthy`, `Degraded` ou `Unhealthy`). Os logs de execução podem ser acompanhados na pasta `/logs`.
+
+---
 
 ## 🐾 Pets (`/api/animais`)
 
@@ -68,9 +95,6 @@ Gerenciamento de animais (busca por espécie, ID do tutor, etc).
 ## 👤 Tutores (`/api/tutores`)
 
 **Métodos:** `GET`, `POST`, `PUT`, `DELETE`
-
-**Descrição:**  
-Cadastro de donos de pets (inclui validação de CPF único).
 
 ---
 
