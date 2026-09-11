@@ -1,4 +1,9 @@
-﻿# 🐾 Clyvo Vet API - Challenge 2026
+﻿## 👥 Integrantes do Grupo (Turma 2TDSPF)
+* **Enzo Vaz** - RM: 561702
+* **Lucas Ryuji Fukuda** - RM: 562152
+* **Pietro Donella Salomão** - RM: 561722
+
+# 🐾 Clyvo Vet API - Challenge 2026
 
 ## 📌 Descrição do Projeto
 

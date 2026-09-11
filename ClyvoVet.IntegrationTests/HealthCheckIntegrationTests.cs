@@ -3,11 +3,12 @@ using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace ClyvoVet.IntegrationTests;
 
-public class HealthCheckIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
+[Collection("ClyvoVet API Collection")]
+public class HealthCheckIntegrationTests
 {
     private readonly HttpClient _client;
 
-    public HealthCheckIntegrationTests(WebApplicationFactory<Program> factory)
+    public HealthCheckIntegrationTests(ApiWebApplicationFactory factory)
     {
         _client = factory.CreateClient();
     }
