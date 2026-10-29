@@ -1,47 +1,37 @@
 ﻿using System.Net;
 using System.Net.Http.Json;
-using Microsoft.AspNetCore.Mvc.Testing;
-using ClyvoVet.Domain.Entities; 
+using ClyvoVet.Domain.Entities;
 
 namespace ClyvoVet.IntegrationTests;
 
 [Collection("ClyvoVet API Collection")]
 public class VeterinariosControllerIntegrationTests
 {
-    private readonly HttpClient _client;
+    private readonly ApiWebApplicationFactory _factory;
 
     public VeterinariosControllerIntegrationTests(ApiWebApplicationFactory factory)
     {
-        _client = factory.CreateClient();
+        _factory = factory;
     }
 
     [Fact]
     public async Task GetVeterinarioById_VeterinarioNaoExistente_RetornaStatus404NotFound()
     {
-        // Arrange
-        int vetIdInvalido = 99999;
+        var client = await AuthHelper.CreateClientAsync(_factory);
 
-        // Act
-        var response = await _client.GetAsync($"/api/veterinarios/{vetIdInvalido}");
+        var response = await client.GetAsync("/api/veterinarios/99999");
 
-        // Assert
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     [Fact]
     public async Task PostVeterinario_NomeECrmvVazios_RetornaStatus400BadRequest()
     {
-        // Arrange
-        var veterinarioInvalido = new Veterinario
-        {
-            Nome = "", 
-            Crmv = ""  
-        };
+        var client = await AuthHelper.CreateClientAsync(_factory);
+        var veterinarioInvalido = new Veterinario { Nome = "", Crmv = "" };
 
-        // Act
-        var response = await _client.PostAsJsonAsync("/api/veterinarios", veterinarioInvalido);
+        var response = await client.PostAsJsonAsync("/api/veterinarios", veterinarioInvalido);
 
-        // Assert
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 }

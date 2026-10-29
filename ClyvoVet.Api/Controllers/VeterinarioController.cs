@@ -1,138 +1,97 @@
-﻿using ClyvoVet.Domain.Entities;
-using ClyvoVet.Infrastructure.Context;
+﻿using ClyvoVet.Api.Auth;
+using ClyvoVet.Api.Hateoas;
+using ClyvoVet.Domain.Common;
+using ClyvoVet.Domain.Entities;
+using ClyvoVet.Domain.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using Swashbuckle.AspNetCore.Annotations;
 
 namespace ClyvoVet.Api.Controllers;
 
+[Authorize]
 [ApiController]
 [Route("api/veterinarios")]
 [Tags("Gestão de Veterinários")]
 public class VeterinariosController : ControllerBase
 {
-    private readonly ClyvoVetContext _context;
+    private readonly VeterinarioService _veterinarioService;
+    private readonly HateoasFactory _hateoas;
 
-    public VeterinariosController(ClyvoVetContext context)
+    public VeterinariosController(VeterinarioService veterinarioService, HateoasFactory hateoas)
     {
-        _context = context;
+        _veterinarioService = veterinarioService;
+        _hateoas = hateoas;
     }
 
-    
-    
-    // GET 
-
-    [HttpGet]
+    [HttpGet(Name = "GetVeterinarios")]
     [SwaggerOperation(
-        Summary = "Lista todos os veterinários", 
-        Description = "Retorna uma listagem completa dos médicos veterinários cadastrados no sistema."
+        Summary = "Lista veterinários com paginação",
+        Description = "Retorna os profissionais paginados. Filtro search em nome e CRMV. Ordenação: sortBy (Id, Nome, Crmv) e sortDirection (asc ou desc)."
     )]
-    public async Task<ActionResult<IEnumerable<Veterinario>>> GetVeterinarios()
+    public async Task<ActionResult<PagedResponse<Veterinario>>> GetVeterinarios(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10,
+        [FromQuery] string? sortBy = null,
+        [FromQuery] string? sortDirection = null,
+        [FromQuery] string? search = null)
     {
-        return Ok(await _context.Veterinarios.ToListAsync());
+        var query = PageQuery.Create(page, pageSize, sortBy, sortDirection, search);
+        var result = await _veterinarioService.ListarAsync(query);
+        return Ok(_hateoas.Page(result, VeterinarioLinks));
     }
 
-    [HttpGet("{id}")]
-    [SwaggerOperation(
-        Summary = "Busca um veterinário por ID", 
-        Description = "Retorna os dados de um veterinário específico baseado no seu ID numérico."
-    )]
-    public async Task<ActionResult<Veterinario>> GetVeterinarioById(int id)
+    [HttpGet("{id:int}", Name = "GetVeterinarioById")]
+    [SwaggerOperation(Summary = "Busca um veterinário por ID", Description = "Retorna os dados de um veterinário e os links HATEOAS.")]
+    public async Task<ActionResult<ResourceResponse<Veterinario>>> GetVeterinarioById(int id)
     {
-        var veterinario = await _context.Veterinarios.FindAsync(id);
-        
-        if (veterinario == null) 
-            return NotFound(new { message = "Veterinário não encontrado." });
-            
-        return Ok(veterinario);
+        var veterinario = await _veterinarioService.ObterPorIdAsync(id);
+        return Ok(_hateoas.Resource(veterinario, VeterinarioLinks(veterinario).ToArray()));
     }
 
-    [HttpGet("crmv/{crmv}")]
-    [SwaggerOperation(
-        Summary = "Busca um veterinário pelo CRMV", 
-        Description = "Retorna os dados do médico correspondente ao número de registro (CRMV) informado."
-    )]
-    public async Task<ActionResult<Veterinario>> GetVeterinarioByCrmv(string crmv)
+    [HttpGet("crmv/{crmv}", Name = "GetVeterinarioByCrmv")]
+    [SwaggerOperation(Summary = "Busca um veterinário pelo CRMV", Description = "Retorna o profissional correspondente ao CRMV informado.")]
+    public async Task<ActionResult<ResourceResponse<Veterinario>>> GetVeterinarioByCrmv(string crmv)
     {
-        var veterinario = await _context.Veterinarios.FirstOrDefaultAsync(v => v.Crmv == crmv);
-        
-        if (veterinario == null) 
-            return NotFound(new { message = "Nenhum veterinário encontrado com este CRMV." });
-            
-        return Ok(veterinario);
+        var veterinario = await _veterinarioService.ObterPorCrmvAsync(crmv);
+        return Ok(_hateoas.Resource(veterinario, VeterinarioLinks(veterinario).ToArray()));
     }
 
-    
-    
-    // POST 
-
-    [HttpPost]
-    [SwaggerOperation(
-        Summary = "Cadastra um novo veterinário", 
-        Description = "Insere um novo profissional no sistema. O Nome e o CRMV são obrigatórios."
-    )]
-    public async Task<ActionResult<Veterinario>> PostVeterinario([FromBody] Veterinario veterinario)
+    [Authorize(Roles = Papeis.Gestao)]
+    [HttpPost(Name = "PostVeterinario")]
+    [SwaggerOperation(Summary = "Cadastra um novo veterinário", Description = "Nome e CRMV são obrigatórios. O CRMV não pode se repetir. Role: Admin.")]
+    public async Task<ActionResult<ResourceResponse<Veterinario>>> PostVeterinario([FromBody] Veterinario veterinario)
     {
-        if (string.IsNullOrWhiteSpace(veterinario.Nome) || string.IsNullOrWhiteSpace(veterinario.Crmv))
-            return BadRequest(new { message = "O Nome e o CRMV do Veterinário são obrigatórios." });
-
-        // Validação para não quebrar a regra UNIQUE do banco de dados
-        var crmvExiste = await _context.Veterinarios.AnyAsync(v => v.Crmv == veterinario.Crmv);
-        if(crmvExiste) 
-            return BadRequest(new { message = "Já existe um veterinário cadastrado com este CRMV." });
-
-        _context.Veterinarios.Add(veterinario);
-        await _context.SaveChangesAsync();
-
-        return CreatedAtAction(nameof(GetVeterinarioById), new { id = veterinario.Id }, veterinario);
+        var salvo = await _veterinarioService.CadastrarVeterinarioAsync(veterinario);
+        var resource = _hateoas.Resource(salvo, VeterinarioLinks(salvo).ToArray());
+        return CreatedAtAction(nameof(GetVeterinarioById), new { id = salvo.Id }, resource);
     }
-    
-    // PUT 
 
-    [HttpPut("{id}")]
-    [SwaggerOperation(
-        Summary = "Atualiza os dados de um veterinário", 
-        Description = "Altera as informações de um profissional existente. O ID da URL deve bater com o ID do corpo."
-    )]
-    public async Task<IActionResult> PutVeterinario(int id, [FromBody] Veterinario veterinarioAtualizado)
+    [Authorize(Roles = Papeis.Gestao)]
+    [HttpPut("{id:int}", Name = "PutVeterinario")]
+    [SwaggerOperation(Summary = "Atualiza os dados de um veterinário", Description = "Altera um profissional existente. O ID da URL deve bater com o ID do corpo. Role: Admin.")]
+    public async Task<IActionResult> PutVeterinario(int id, [FromBody] Veterinario veterinario)
     {
-        if (id != veterinarioAtualizado.Id) 
-            return BadRequest(new { message = "O ID da URL não confere com o ID do corpo da requisição." });
-
-        var veterinarioExistente = await _context.Veterinarios.FindAsync(id);
-        
-        if (veterinarioExistente == null) 
-            return NotFound(new { message = "Veterinário não encontrado para atualização." });
-
-        // Atualizando os dados
-        veterinarioExistente.Nome = veterinarioAtualizado.Nome;
-        veterinarioExistente.Crmv = veterinarioAtualizado.Crmv;
-        veterinarioExistente.Telefone = veterinarioAtualizado.Telefone;
-
-        _context.Entry(veterinarioExistente).State = EntityState.Modified;
-        await _context.SaveChangesAsync();
-
+        await _veterinarioService.AtualizarAsync(id, veterinario);
         return NoContent();
     }
-    
-    
-    // DELETE
 
-    [HttpDelete("{id}")]
-    [SwaggerOperation(
-        Summary = "Exclui um veterinário", 
-        Description = "Remove permanentemente um veterinário do banco de dados."
-    )]
+    [Authorize(Roles = Papeis.Gestao)]
+    [HttpDelete("{id:int}", Name = "DeleteVeterinario")]
+    [SwaggerOperation(Summary = "Exclui um veterinário", Description = "Remove um veterinário. A exclusão é recusada quando existem consultas vinculadas. Role: Admin.")]
     public async Task<IActionResult> DeleteVeterinario(int id)
     {
-        var veterinario = await _context.Veterinarios.FindAsync(id);
-        
-        if (veterinario == null) 
-            return NotFound(new { message = "Veterinário não encontrado para exclusão." });
-
-        _context.Veterinarios.Remove(veterinario);
-        await _context.SaveChangesAsync();
-
+        await _veterinarioService.ExcluirAsync(id);
         return NoContent();
+    }
+
+    private IReadOnlyList<LinkDto> VeterinarioLinks(Veterinario veterinario)
+    {
+        return
+        [
+            _hateoas.Link("self", "GetVeterinarioById", "GET", new { id = veterinario.Id }),
+            _hateoas.Link("update", "PutVeterinario", "PUT", new { id = veterinario.Id }),
+            _hateoas.Link("delete", "DeleteVeterinario", "DELETE", new { id = veterinario.Id })
+        ];
     }
 }

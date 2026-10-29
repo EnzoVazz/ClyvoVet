@@ -16,7 +16,7 @@ public class VeterinarioServiceTests
     public VeterinarioServiceTests()
     {
         _veterinarioRepositoryMock = new Mock<IVeterinarioRepository>();
-        _veterinarioService = new VeterinarioService(_veterinarioRepositoryMock.Object);
+        _veterinarioService = new VeterinarioService(_veterinarioRepositoryMock.Object, AuditoriaDouble.Repository().Object, AuditoriaDouble.Usuario().Object);
     }
 
     [Fact]
@@ -62,5 +62,17 @@ public class VeterinarioServiceTests
         
         _veterinarioRepositoryMock.Verify(repo => repo.ExisteCrmvAsync(veterinarioDuplicado.Crmv), Times.Once);
         _veterinarioRepositoryMock.Verify(repo => repo.AdicionarAsync(It.IsAny<Veterinario>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExcluirAsync_VeterinarioComConsultas_DeveLancarConflictException()
+    {
+        _veterinarioRepositoryMock.Setup(repo => repo.ObterPorIdAsync(6)).ReturnsAsync(new Veterinario { Id = 6, Nome = "Dra. Letícia" });
+        _veterinarioRepositoryMock.Setup(repo => repo.PossuiConsultasAsync(6)).ReturnsAsync(true);
+
+        var excecao = await Assert.ThrowsAsync<ClyvoVet.Domain.Exceptions.ConflictException>(() => _veterinarioService.ExcluirAsync(6));
+
+        Assert.Equal("Não é possível excluir este veterinário, pois ele possui consultas vinculadas.", excecao.Message);
+        _veterinarioRepositoryMock.Verify(repo => repo.RemoverAsync(It.IsAny<Veterinario>()), Times.Never);
     }
 }

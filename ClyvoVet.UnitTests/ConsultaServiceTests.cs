@@ -16,7 +16,7 @@ public class ConsultaServiceTests
     public ConsultaServiceTests()
     {
         _consultaRepositoryMock = new Mock<IConsultaRepository>();
-        _consultaService = new ConsultaService(_consultaRepositoryMock.Object);
+        _consultaService = new ConsultaService(_consultaRepositoryMock.Object, AuditoriaDouble.Repository().Object, AuditoriaDouble.Usuario().Object);
     }
 
     [Fact]
@@ -59,5 +59,26 @@ public class ConsultaServiceTests
         Assert.Equal("Os IDs do Veterinário, Pet e Clínica são obrigatórios para agendar uma consulta.", excecao.Message);
         
         _consultaRepositoryMock.Verify(repo => repo.AdicionarAsync(It.IsAny<Consulta>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task AtualizarAsync_IdsInvalidos_DeveLancarArgumentException()
+    {
+        var consulta = new Consulta { Id = 4, IdVeterinario = 0, IdPet = 1, IdClinica = 1 };
+
+        var excecao = await Assert.ThrowsAsync<ArgumentException>(() => _consultaService.AtualizarAsync(4, consulta));
+
+        Assert.Equal("Os IDs do Veterinário, Pet e Clínica são obrigatórios para agendar uma consulta.", excecao.Message);
+        _consultaRepositoryMock.Verify(repo => repo.AtualizarAsync(It.IsAny<Consulta>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExcluirAsync_ConsultaInexistente_DeveLancarNotFoundException()
+    {
+        _consultaRepositoryMock.Setup(repo => repo.ObterPorIdAsync(20)).ReturnsAsync((Consulta?)null);
+
+        var excecao = await Assert.ThrowsAsync<ClyvoVet.Domain.Exceptions.NotFoundException>(() => _consultaService.ExcluirAsync(20));
+
+        Assert.Equal("Consulta não encontrada para exclusão.", excecao.Message);
     }
 }

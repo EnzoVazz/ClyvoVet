@@ -1,139 +1,98 @@
-﻿using ClyvoVet.Domain.Entities;
-using ClyvoVet.Infrastructure.Context;
+﻿using ClyvoVet.Api.Auth;
+using ClyvoVet.Api.Hateoas;
+using ClyvoVet.Domain.Common;
+using ClyvoVet.Domain.Entities;
+using ClyvoVet.Domain.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using Swashbuckle.AspNetCore.Annotations;
 
 namespace ClyvoVet.Api.Controllers;
 
+[Authorize]
 [ApiController]
 [Route("api/tutores")]
 [Tags("Gestão de Tutores")]
 public class TutoresController : ControllerBase
 {
-    private readonly ClyvoVetContext _context;
+    private readonly TutorService _tutorService;
+    private readonly HateoasFactory _hateoas;
 
-    public TutoresController(ClyvoVetContext context)
+    public TutoresController(TutorService tutorService, HateoasFactory hateoas)
     {
-        _context = context;
-    }
-    
-    
-    // GET 
-    
-    [HttpGet]
-    [SwaggerOperation(
-        Summary = "Lista todos os tutores", 
-        Description = "Retorna uma listagem completa dos responsáveis (tutores) cadastrados."
-    )]
-    public async Task<ActionResult<IEnumerable<Tutor>>> GetTutores()
-    {
-        return Ok(await _context.Tutores.ToListAsync());
+        _tutorService = tutorService;
+        _hateoas = hateoas;
     }
 
-    [HttpGet("{id}")]
+    [HttpGet(Name = "GetTutores")]
     [SwaggerOperation(
-        Summary = "Busca um tutor por ID", 
-        Description = "Retorna os dados de um tutor específico baseado no ID numérico."
+        Summary = "Lista tutores com paginação",
+        Description = "Retorna os responsáveis paginados. Filtro search em nome e CPF. Ordenação: sortBy (Id, Nome, Cpf) e sortDirection (asc ou desc)."
     )]
-    public async Task<ActionResult<Tutor>> GetTutorById(int id)
+    public async Task<ActionResult<PagedResponse<Tutor>>> GetTutores(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10,
+        [FromQuery] string? sortBy = null,
+        [FromQuery] string? sortDirection = null,
+        [FromQuery] string? search = null)
     {
-        var tutor = await _context.Tutores.FindAsync(id);
-        
-        if (tutor == null) 
-            return NotFound(new { message = "Tutor não encontrado." });
-            
-        return Ok(tutor);
+        var query = PageQuery.Create(page, pageSize, sortBy, sortDirection, search);
+        var result = await _tutorService.ListarAsync(query);
+        return Ok(_hateoas.Page(result, TutorLinks));
     }
 
-    [HttpGet("cpf/{cpf}")]
-    [SwaggerOperation(
-        Summary = "Busca um tutor pelo CPF", 
-        Description = "Retorna os dados do tutor correspondente ao CPF exato informado."
-    )]
-    public async Task<ActionResult<Tutor>> GetTutorByCpf(string cpf)
+    [HttpGet("{id:int}", Name = "GetTutorById")]
+    [SwaggerOperation(Summary = "Busca um tutor por ID", Description = "Retorna os dados de um tutor e os links HATEOAS.")]
+    public async Task<ActionResult<ResourceResponse<Tutor>>> GetTutorById(int id)
     {
-        var tutor = await _context.Tutores.FirstOrDefaultAsync(t => t.Cpf == cpf);
-        
-        if (tutor == null) 
-            return NotFound(new { message = "Nenhum tutor encontrado com este CPF." });
-            
-        return Ok(tutor);
+        var tutor = await _tutorService.ObterPorIdAsync(id);
+        return Ok(_hateoas.Resource(tutor, TutorLinks(tutor).ToArray()));
     }
 
-    
-    
-    // POST 
-
-    [HttpPost]
-    [SwaggerOperation(
-        Summary = "Cadastra um novo tutor", 
-        Description = "Insere um novo responsável no sistema. Nome e CPF são obrigatórios."
-    )]
-    public async Task<ActionResult<Tutor>> PostTutor([FromBody] Tutor tutor)
+    [HttpGet("cpf/{cpf}", Name = "GetTutorByCpf")]
+    [SwaggerOperation(Summary = "Busca um tutor pelo CPF", Description = "Retorna o tutor correspondente ao CPF exato informado.")]
+    public async Task<ActionResult<ResourceResponse<Tutor>>> GetTutorByCpf(string cpf)
     {
-        if (string.IsNullOrWhiteSpace(tutor.Nome) || string.IsNullOrWhiteSpace(tutor.Cpf))
-            return BadRequest(new { message = "O Nome e o CPF do Tutor são obrigatórios." });
-
-        // Validação para não quebrar a regra UNIQUE do banco de dados
-        var cpfExiste = await _context.Tutores.AnyAsync(t => t.Cpf == tutor.Cpf);
-        if(cpfExiste) 
-            return BadRequest(new { message = "Já existe um tutor cadastrado com este CPF." });
-
-        _context.Tutores.Add(tutor);
-        await _context.SaveChangesAsync();
-
-        return CreatedAtAction(nameof(GetTutorById), new { id = tutor.Id }, tutor);
+        var tutor = await _tutorService.ObterPorCpfAsync(cpf);
+        return Ok(_hateoas.Resource(tutor, TutorLinks(tutor).ToArray()));
     }
 
-  
-    
-    // PUT
-
-    [HttpPut("{id}")]
-    [SwaggerOperation(
-        Summary = "Atualiza os dados de um tutor", 
-        Description = "Altera as informações de um tutor existente. O ID da URL deve bater com o ID do corpo."
-    )]
-    public async Task<IActionResult> PutTutor(int id, [FromBody] Tutor tutorAtualizado)
+    [Authorize(Roles = Papeis.Operacao)]
+    [HttpPost(Name = "PostTutor")]
+    [SwaggerOperation(Summary = "Cadastra um novo tutor", Description = "Nome e CPF são obrigatórios. O CPF não pode se repetir. Roles: Admin, Veterinario e Recepcionista.")]
+    public async Task<ActionResult<ResourceResponse<Tutor>>> PostTutor([FromBody] Tutor tutor)
     {
-        if (id != tutorAtualizado.Id) 
-            return BadRequest(new { message = "O ID da URL não confere com o ID do corpo da requisição." });
+        var salvo = await _tutorService.CadastrarTutorAsync(tutor);
+        var resource = _hateoas.Resource(salvo, TutorLinks(salvo).ToArray());
+        return CreatedAtAction(nameof(GetTutorById), new { id = salvo.Id }, resource);
+    }
 
-        var tutorExistente = await _context.Tutores.FindAsync(id);
-        
-        if (tutorExistente == null) 
-            return NotFound(new { message = "Tutor não encontrado para atualização." });
-        
-        tutorExistente.Nome = tutorAtualizado.Nome;
-        tutorExistente.Cpf = tutorAtualizado.Cpf;
-        tutorExistente.Telefone = tutorAtualizado.Telefone;
-
-        _context.Entry(tutorExistente).State = EntityState.Modified;
-        await _context.SaveChangesAsync();
-
+    [Authorize(Roles = Papeis.Operacao)]
+    [HttpPut("{id:int}", Name = "PutTutor")]
+    [SwaggerOperation(Summary = "Atualiza os dados de um tutor", Description = "Altera um tutor existente. O ID da URL deve bater com o ID do corpo.")]
+    public async Task<IActionResult> PutTutor(int id, [FromBody] Tutor tutor)
+    {
+        await _tutorService.AtualizarAsync(id, tutor);
         return NoContent();
     }
 
-    
-    
-    // DELETE 
-
-    [HttpDelete("{id}")]
-    [SwaggerOperation(
-        Summary = "Exclui um tutor", 
-        Description = "Remove permanentemente um tutor do banco de dados. Atenção: falhará se houver pets vinculados."
-    )]
+    [Authorize(Roles = Papeis.Clinica)]
+    [HttpDelete("{id:int}", Name = "DeleteTutor")]
+    [SwaggerOperation(Summary = "Exclui um tutor", Description = "Remove um tutor. A exclusão é recusada quando existem pets vinculados. Roles: Admin e Veterinario.")]
     public async Task<IActionResult> DeleteTutor(int id)
     {
-        var tutor = await _context.Tutores.FindAsync(id);
-        
-        if (tutor == null) 
-            return NotFound(new { message = "Tutor não encontrado para exclusão." });
-
-        _context.Tutores.Remove(tutor);
-        await _context.SaveChangesAsync();
-
+        await _tutorService.ExcluirAsync(id);
         return NoContent();
+    }
+
+    private IReadOnlyList<LinkDto> TutorLinks(Tutor tutor)
+    {
+        return
+        [
+            _hateoas.Link("self", "GetTutorById", "GET", new { id = tutor.Id }),
+            _hateoas.Link("update", "PutTutor", "PUT", new { id = tutor.Id }),
+            _hateoas.Link("delete", "DeleteTutor", "DELETE", new { id = tutor.Id }),
+            _hateoas.Link("pets", "GetPetsByTutor", "GET", new { tutorId = tutor.Id })
+        ];
     }
 }

@@ -16,7 +16,7 @@ public class TutorServiceTests
     public TutorServiceTests()
     {
         _tutorRepositoryMock = new Mock<ITutorRepository>();
-        _tutorService = new TutorService(_tutorRepositoryMock.Object);
+        _tutorService = new TutorService(_tutorRepositoryMock.Object, AuditoriaDouble.Repository().Object, AuditoriaDouble.Usuario().Object);
     }
 
     [Fact]
@@ -66,5 +66,30 @@ public class TutorServiceTests
         // Garante que tentou consultar o CPF, mas foi bloqueado de salvar
         _tutorRepositoryMock.Verify(repo => repo.ExisteCpfAsync(tutorDuplicado.Cpf), Times.Once);
         _tutorRepositoryMock.Verify(repo => repo.AdicionarAsync(It.IsAny<Tutor>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task AtualizarAsync_CpfDeOutroTutor_DeveLancarInvalidOperationException()
+    {
+        var dados = new Tutor { Id = 2, Nome = "Maria", Cpf = "98765432100" };
+        _tutorRepositoryMock.Setup(repo => repo.ObterPorIdAsync(2)).ReturnsAsync(new Tutor { Id = 2, Nome = "Maria", Cpf = "111" });
+        _tutorRepositoryMock.Setup(repo => repo.ObterPorCpfAsync(dados.Cpf)).ReturnsAsync(new Tutor { Id = 9, Cpf = dados.Cpf });
+
+        var excecao = await Assert.ThrowsAsync<InvalidOperationException>(() => _tutorService.AtualizarAsync(2, dados));
+
+        Assert.Equal("Já existe um tutor cadastrado com este CPF.", excecao.Message);
+        _tutorRepositoryMock.Verify(repo => repo.AtualizarAsync(It.IsAny<Tutor>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExcluirAsync_TutorComPets_DeveLancarConflictException()
+    {
+        _tutorRepositoryMock.Setup(repo => repo.ObterPorIdAsync(4)).ReturnsAsync(new Tutor { Id = 4, Nome = "Ana" });
+        _tutorRepositoryMock.Setup(repo => repo.PossuiPetsAsync(4)).ReturnsAsync(true);
+
+        var excecao = await Assert.ThrowsAsync<ClyvoVet.Domain.Exceptions.ConflictException>(() => _tutorService.ExcluirAsync(4));
+
+        Assert.Equal("Não é possível excluir este tutor, pois ele possui pets vinculados.", excecao.Message);
+        _tutorRepositoryMock.Verify(repo => repo.RemoverAsync(It.IsAny<Tutor>()), Times.Never);
     }
 }

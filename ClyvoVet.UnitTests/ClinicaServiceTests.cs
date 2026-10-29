@@ -16,7 +16,7 @@ public class ClinicaServiceTests
     public ClinicaServiceTests()
     {
         _clinicaRepositoryMock = new Mock<IClinicaRepository>();
-        _clinicaService = new ClinicaService(_clinicaRepositoryMock.Object);
+        _clinicaService = new ClinicaService(_clinicaRepositoryMock.Object, AuditoriaDouble.Repository().Object, AuditoriaDouble.Usuario().Object);
     }
 
     [Fact]
@@ -62,5 +62,17 @@ public class ClinicaServiceTests
 
         _clinicaRepositoryMock.Verify(repo => repo.ExisteCnpjAsync(clinicaDuplicada.Cnpj), Times.Once);
         _clinicaRepositoryMock.Verify(repo => repo.AdicionarAsync(It.IsAny<Clinica>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExcluirAsync_ClinicaComConsultas_DeveLancarConflictException()
+    {
+        _clinicaRepositoryMock.Setup(repo => repo.ObterPorIdAsync(8)).ReturnsAsync(new Clinica { Id = 8, Nome = "Vet Vida" });
+        _clinicaRepositoryMock.Setup(repo => repo.PossuiConsultasAsync(8)).ReturnsAsync(true);
+
+        var excecao = await Assert.ThrowsAsync<ClyvoVet.Domain.Exceptions.ConflictException>(() => _clinicaService.ExcluirAsync(8));
+
+        Assert.Equal("Não é possível excluir esta clínica, pois ela possui consultas vinculadas.", excecao.Message);
+        _clinicaRepositoryMock.Verify(repo => repo.RemoverAsync(It.IsAny<Clinica>()), Times.Never);
     }
 }

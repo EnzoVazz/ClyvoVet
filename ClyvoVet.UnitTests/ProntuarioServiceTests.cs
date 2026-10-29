@@ -16,7 +16,7 @@ public class ProntuarioServiceTests
     public ProntuarioServiceTests()
     {
         _prontuarioRepositoryMock = new Mock<IProntuarioRepository>();
-        _prontuarioService = new ProntuarioService(_prontuarioRepositoryMock.Object);
+        _prontuarioService = new ProntuarioService(_prontuarioRepositoryMock.Object, AuditoriaDouble.Repository().Object, AuditoriaDouble.Usuario().Object);
     }
 
     [Fact]
@@ -57,5 +57,28 @@ public class ProntuarioServiceTests
         _prontuarioRepositoryMock.Verify(
             repo => repo.AdicionarAsync(It.IsAny<Prontuario>()),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task AtualizarAsync_ProntuarioInexistente_DeveLancarNotFoundException()
+    {
+        _prontuarioRepositoryMock.Setup(repo => repo.ObterPorIdAsync(15)).ReturnsAsync((Prontuario?)null);
+
+        var excecao = await Assert.ThrowsAsync<ClyvoVet.Domain.Exceptions.NotFoundException>(() =>
+            _prontuarioService.AtualizarAsync(15, new Prontuario { Id = 15, Diagnostico = "Otite" }));
+
+        Assert.Equal("Prontuário não encontrado para atualização.", excecao.Message);
+        _prontuarioRepositoryMock.Verify(repo => repo.AtualizarAsync(It.IsAny<Prontuario>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExcluirAsync_ProntuarioInexistente_DeveLancarNotFoundException()
+    {
+        _prontuarioRepositoryMock.Setup(repo => repo.ObterPorIdAsync(16)).ReturnsAsync((Prontuario?)null);
+
+        var excecao = await Assert.ThrowsAsync<ClyvoVet.Domain.Exceptions.NotFoundException>(() =>
+            _prontuarioService.ExcluirAsync(16));
+
+        Assert.Equal("Prontuário não encontrado para exclusão.", excecao.Message);
     }
 }

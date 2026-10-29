@@ -1,144 +1,103 @@
-﻿using ClyvoVet.Domain.Entities;
-using ClyvoVet.Infrastructure.Context;
+﻿using ClyvoVet.Api.Auth;
+using ClyvoVet.Api.Hateoas;
+using ClyvoVet.Domain.Common;
+using ClyvoVet.Domain.Entities;
+using ClyvoVet.Domain.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using Swashbuckle.AspNetCore.Annotations;
 
 namespace ClyvoVet.Api.Controllers;
 
+[Authorize]
 [ApiController]
 [Route("api/prontuarios")]
 [Tags("Gestão de Prontuários")]
 public class ProntuariosController : ControllerBase
 {
-    private readonly ClyvoVetContext _context;
+    private readonly ProntuarioService _prontuarioService;
+    private readonly HateoasFactory _hateoas;
 
-    public ProntuariosController(ClyvoVetContext context)
+    public ProntuariosController(ProntuarioService prontuarioService, HateoasFactory hateoas)
     {
-        _context = context;
-    }
-    
-    
-    
-    // GET 
-    
-
-    [HttpGet]
-    [SwaggerOperation(
-        Summary = "Lista todos os prontuários", 
-        Description = "Retorna o histórico completo de todos os prontuários cadastrados."
-    )]
-    public async Task<ActionResult<IEnumerable<Prontuario>>> GetProntuarios()
-    {
-        return Ok(await _context.Prontuarios.ToListAsync());
+        _prontuarioService = prontuarioService;
+        _hateoas = hateoas;
     }
 
-    [HttpGet("{id}")]
+    [HttpGet(Name = "GetProntuarios")]
     [SwaggerOperation(
-        Summary = "Busca um prontuário por ID", 
-        Description = "Retorna os detalhes de um prontuário específico pelo seu ID numérico."
+        Summary = "Lista prontuários com paginação",
+        Description = "Retorna o histórico paginado. Filtro search no diagnóstico. Ordenação: sortBy (Id, DataRegistro, Diagnostico) e sortDirection (asc ou desc)."
     )]
-    public async Task<ActionResult<Prontuario>> GetProntuarioById(int id)
+    public async Task<ActionResult<PagedResponse<Prontuario>>> GetProntuarios(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10,
+        [FromQuery] string? sortBy = null,
+        [FromQuery] string? sortDirection = null,
+        [FromQuery] string? search = null)
     {
-        var prontuario = await _context.Prontuarios.FindAsync(id);
-        
-        if (prontuario == null) 
-            return NotFound(new { message = "Prontuário não encontrado." });
-            
-        return Ok(prontuario);
+        var query = PageQuery.Create(page, pageSize, sortBy, sortDirection, search);
+        var result = await _prontuarioService.ListarAsync(query, null);
+        return Ok(_hateoas.Page(result, ProntuarioLinks));
     }
 
-    [HttpGet("diagnostico/{termo}")]
-    [SwaggerOperation(
-        Summary = "Busca prontuários por palavra-chave no diagnóstico", 
-        Description = "Filtra prontuários que contenham um termo específico no texto do diagnóstico (ex: 'virose')."
-    )]
-    public async Task<ActionResult<IEnumerable<Prontuario>>> GetProntuariosByDiagnostico(string termo)
+    [HttpGet("{id:int}", Name = "GetProntuarioById")]
+    [SwaggerOperation(Summary = "Busca um prontuário por ID", Description = "Retorna os detalhes de um prontuário e os links HATEOAS.")]
+    public async Task<ActionResult<ResourceResponse<Prontuario>>> GetProntuarioById(int id)
     {
-        var prontuarios = await _context.Prontuarios
-            .Where(p => p.Diagnostico != null && p.Diagnostico.ToLower().Contains(termo.ToLower()))
-            .ToListAsync();
-
-        if (!prontuarios.Any()) 
-            return NotFound(new { message = $"Nenhum prontuário encontrado contendo a palavra '{termo}'." });
-            
-        return Ok(prontuarios);
+        var prontuario = await _prontuarioService.ObterPorIdAsync(id);
+        return Ok(_hateoas.Resource(prontuario, ProntuarioLinks(prontuario).ToArray()));
     }
 
-    
-    
-    // POST
-
-    [HttpPost]
-    [SwaggerOperation(
-        Summary = "Cria um novo prontuário", 
-        Description = "Registra um novo prontuário no sistema. Se a data de registro não for enviada, assumirá a data e hora atual."
-    )]
-    public async Task<ActionResult<Prontuario>> PostProntuario([FromBody] Prontuario prontuario)
+    [HttpGet("diagnostico/{termo}", Name = "GetProntuariosByDiagnostico")]
+    [SwaggerOperation(Summary = "Busca prontuários por palavra-chave", Description = "Filtra diagnósticos que contenham o termo informado, com paginação.")]
+    public async Task<ActionResult<PagedResponse<Prontuario>>> GetProntuariosByDiagnostico(
+        string termo,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10,
+        [FromQuery] string? sortBy = null,
+        [FromQuery] string? sortDirection = null)
     {
-        if (string.IsNullOrWhiteSpace(prontuario.Diagnostico))
-            return BadRequest(new { message = "O Diagnóstico não pode estar vazio." });
-
-        // Se o usuário não enviou a data, preenchemos com a data de hoje automaticamente
-        if (prontuario.DataRegistro == null)
-        {
-            prontuario.DataRegistro = DateTime.Now;
-        }
-
-        _context.Prontuarios.Add(prontuario);
-        await _context.SaveChangesAsync();
-
-        return CreatedAtAction(nameof(GetProntuarioById), new { id = prontuario.Id }, prontuario);
+        var query = PageQuery.Create(page, pageSize, sortBy, sortDirection, null);
+        var result = await _prontuarioService.ListarAsync(query, termo);
+        return Ok(_hateoas.Page(result, ProntuarioLinks));
     }
 
-    
-    
-    // PUT
-
-    [HttpPut("{id}")]
-    [SwaggerOperation(
-        Summary = "Atualiza um prontuário", 
-        Description = "Altera o texto do diagnóstico ou a data de um prontuário existente."
-    )]
-    public async Task<IActionResult> PutProntuario(int id, [FromBody] Prontuario prontuarioAtualizado)
+    [Authorize(Roles = Papeis.Clinica)]
+    [HttpPost(Name = "PostProntuario")]
+    [SwaggerOperation(Summary = "Cria um novo prontuário", Description = "O diagnóstico é obrigatório. Sem data, o registro assume a data atual. Roles: Admin e Veterinario.")]
+    public async Task<ActionResult<ResourceResponse<Prontuario>>> PostProntuario([FromBody] Prontuario prontuario)
     {
-        if (id != prontuarioAtualizado.Id) 
-            return BadRequest(new { message = "O ID da URL não confere com o ID do corpo da requisição." });
+        var salvo = await _prontuarioService.RegistrarProntuarioAsync(prontuario);
+        var resource = _hateoas.Resource(salvo, ProntuarioLinks(salvo).ToArray());
+        return CreatedAtAction(nameof(GetProntuarioById), new { id = salvo.Id }, resource);
+    }
 
-        var prontuarioExistente = await _context.Prontuarios.FindAsync(id);
-        
-        if (prontuarioExistente == null) 
-            return NotFound(new { message = "Prontuário não encontrado para atualização." });
-
-        // Atualizando os dados
-        prontuarioExistente.Diagnostico = prontuarioAtualizado.Diagnostico;
-        prontuarioExistente.DataRegistro = prontuarioAtualizado.DataRegistro;
-
-        _context.Entry(prontuarioExistente).State = EntityState.Modified;
-        await _context.SaveChangesAsync();
-
+    [Authorize(Roles = Papeis.Clinica)]
+    [HttpPut("{id:int}", Name = "PutProntuario")]
+    [SwaggerOperation(Summary = "Atualiza um prontuário", Description = "Altera o diagnóstico ou a data de um prontuário existente. Roles: Admin e Veterinario.")]
+    public async Task<IActionResult> PutProntuario(int id, [FromBody] Prontuario prontuario)
+    {
+        await _prontuarioService.AtualizarAsync(id, prontuario);
         return NoContent();
     }
 
-    
-    
-    // DELETE
-
-    [HttpDelete("{id}")]
-    [SwaggerOperation(
-        Summary = "Exclui um prontuário", 
-        Description = "Remove permanentemente um prontuário do banco de dados."
-    )]
+    [Authorize(Roles = Papeis.Clinica)]
+    [HttpDelete("{id:int}", Name = "DeleteProntuario")]
+    [SwaggerOperation(Summary = "Exclui um prontuário", Description = "Remove um prontuário do histórico. Roles: Admin e Veterinario.")]
     public async Task<IActionResult> DeleteProntuario(int id)
     {
-        var prontuario = await _context.Prontuarios.FindAsync(id);
-        
-        if (prontuario == null) 
-            return NotFound(new { message = "Prontuário não encontrado para exclusão." });
-
-        _context.Prontuarios.Remove(prontuario);
-        await _context.SaveChangesAsync();
-
+        await _prontuarioService.ExcluirAsync(id);
         return NoContent();
+    }
+
+    private IReadOnlyList<LinkDto> ProntuarioLinks(Prontuario prontuario)
+    {
+        return
+        [
+            _hateoas.Link("self", "GetProntuarioById", "GET", new { id = prontuario.Id }),
+            _hateoas.Link("update", "PutProntuario", "PUT", new { id = prontuario.Id }),
+            _hateoas.Link("delete", "DeleteProntuario", "DELETE", new { id = prontuario.Id })
+        ];
     }
 }

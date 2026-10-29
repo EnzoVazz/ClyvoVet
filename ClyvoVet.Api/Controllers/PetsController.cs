@@ -1,168 +1,115 @@
-﻿using ClyvoVet.Domain.Entities;
-using ClyvoVet.Infrastructure.Context; 
+﻿using ClyvoVet.Api.Auth;
+using ClyvoVet.Api.Hateoas;
+using ClyvoVet.Domain.Common;
+using ClyvoVet.Domain.Entities;
+using ClyvoVet.Domain.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using Swashbuckle.AspNetCore.Annotations;
 
 namespace ClyvoVet.Api.Controllers;
 
+[Authorize]
 [ApiController]
-[Route("api/animais")] 
-[Tags("Gestão de Pets")] 
+[Route("api/animais")]
+[Tags("Gestão de Pets")]
 public class PetsController : ControllerBase
 {
-    private readonly ClyvoVetContext _context;
+    private readonly PetService _petService;
+    private readonly HateoasFactory _hateoas;
 
-    public PetsController(ClyvoVetContext context)
+    public PetsController(PetService petService, HateoasFactory hateoas)
     {
-        _context = context;
+        _petService = petService;
+        _hateoas = hateoas;
     }
 
-    
-    
-    // GET 
-
-    [HttpGet]
+    [HttpGet(Name = "GetPets")]
     [SwaggerOperation(
-        Summary = "Lista todos os pets",
-        Description = "Retorna uma listagem completa de todos os animais cadastrados no banco de dados da clínica."
+        Summary = "Lista pets com paginação",
+        Description = "Retorna os animais paginados. Filtros: search, especie e idTutor. Ordenação: sortBy (Id, Nome, Especie, Idade, Peso, IdTutor) e sortDirection (asc ou desc)."
     )]
-    public async Task<ActionResult<IEnumerable<Pet>>> GetPets()
+    public async Task<ActionResult<PagedResponse<Pet>>> GetPets(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10,
+        [FromQuery] string? sortBy = null,
+        [FromQuery] string? sortDirection = null,
+        [FromQuery] string? search = null,
+        [FromQuery] string? especie = null,
+        [FromQuery] int? idTutor = null)
     {
-        return Ok(await _context.Pets.ToListAsync()); 
+        var query = PageQuery.Create(page, pageSize, sortBy, sortDirection, search);
+        var result = await _petService.ListarAsync(query, especie, idTutor);
+        return Ok(_hateoas.Page(result, PetLinks));
     }
 
-    [HttpGet("{id}")]
-    [SwaggerOperation(
-        Summary = "Busca um pet por ID",
-        Description = "Informe o ID numérico do pet para retornar seus dados completos."
-    )]
-    public async Task<ActionResult<Pet>> GetPetById(int id)
+    [HttpGet("{id:int}", Name = "GetPetById")]
+    [SwaggerOperation(Summary = "Busca um pet por ID", Description = "Informe o ID numérico do pet para retornar seus dados e os links HATEOAS.")]
+    public async Task<ActionResult<ResourceResponse<Pet>>> GetPetById(int id)
     {
-        var pet = await _context.Pets.FindAsync(id);
-
-        if (pet == null)
-            return NotFound(new { message = "Pet não encontrado." }); 
-
-        return Ok(pet); 
+        var pet = await _petService.ObterPorIdAsync(id);
+        return Ok(_hateoas.Resource(pet, PetLinks(pet).ToArray()));
     }
 
-    [HttpGet("especie/{especie}")]
-    [SwaggerOperation(
-        Summary = "Busca pets por Espécie",
-        Description = "Filtra os animais pela espécie informada (ex: Cachorro, Gato)."
-    )]
-    public async Task<ActionResult<IEnumerable<Pet>>> GetPetsByEspecie(string especie)
+    [HttpGet("especie/{especie}", Name = "GetPetsByEspecie")]
+    [SwaggerOperation(Summary = "Busca pets por espécie", Description = "Filtra os animais pela espécie informada, com paginação e ordenação.")]
+    public Task<ActionResult<PagedResponse<Pet>>> GetPetsByEspecie(
+        string especie,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10,
+        [FromQuery] string? sortBy = null,
+        [FromQuery] string? sortDirection = null,
+        [FromQuery] string? search = null)
+        => GetPets(page, pageSize, sortBy, sortDirection, search, especie, null);
+
+    [HttpGet("tutor/{tutorId:int}", Name = "GetPetsByTutor")]
+    [SwaggerOperation(Summary = "Busca pets pelo ID do tutor", Description = "Retorna os animais vinculados a um tutor, com paginação e ordenação.")]
+    public Task<ActionResult<PagedResponse<Pet>>> GetPetsByTutor(
+        int tutorId,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10,
+        [FromQuery] string? sortBy = null,
+        [FromQuery] string? sortDirection = null,
+        [FromQuery] string? search = null)
+        => GetPets(page, pageSize, sortBy, sortDirection, search, null, tutorId);
+
+    [Authorize(Roles = Papeis.Operacao)]
+    [HttpPost(Name = "PostPet")]
+    [SwaggerOperation(Summary = "Cadastra um novo pet", Description = "Insere um novo animal. Nome, espécie e ID do tutor são obrigatórios. Roles: Admin, Veterinario e Recepcionista.")]
+    public async Task<ActionResult<ResourceResponse<Pet>>> PostPet([FromBody] Pet pet)
     {
-        var pets = await _context.Pets
-            .Where(p => p.Especie.ToLower() == especie.ToLower())
-            .ToListAsync();
-
-        if (!pets.Any())
-            return NotFound(new { message = $"Nenhum pet da espécie '{especie}' encontrado." }); 
-
-        return Ok(pets); 
+        var salvo = await _petService.CadastrarPetAsync(pet);
+        var resource = _hateoas.Resource(salvo, PetLinks(salvo).ToArray());
+        return CreatedAtAction(nameof(GetPetById), new { id = salvo.Id }, resource);
     }
 
-    [HttpGet("tutor/{tutorId}")]
-    [SwaggerOperation(
-        Summary = "Busca pets pelo ID do Tutor",
-        Description = "Retorna todos os animais vinculados a um tutor específico."
-    )]
-    public async Task<ActionResult<IEnumerable<Pet>>> GetPetsByTutor(int tutorId)
+    [Authorize(Roles = Papeis.Operacao)]
+    [HttpPut("{id:int}", Name = "PutPet")]
+    [SwaggerOperation(Summary = "Atualiza os dados de um pet", Description = "Altera um pet existente. O ID da URL deve ser igual ao ID do corpo.")]
+    public async Task<IActionResult> PutPet(int id, [FromBody] Pet pet)
     {
-        var pets = await _context.Pets
-            .Where(p => p.IdTutor == tutorId)
-            .ToListAsync();
-
-        if (!pets.Any())
-            return NotFound(new { message = $"Nenhum pet encontrado para o Tutor de ID {tutorId}." }); 
-
-        return Ok(pets); 
+        await _petService.AtualizarAsync(id, pet);
+        return NoContent();
     }
 
-    
-    
-    // POST  
-    
-    [HttpPost]
-    [SwaggerOperation(
-        Summary = "Cadastra um novo pet",
-        Description = "Insere um novo animal no sistema. O Nome, a Espécie e o ID do Tutor são obrigatórios."
-    )]
-    public async Task<ActionResult<Pet>> PostPet([FromBody] Pet pet)
-    {
-        if (string.IsNullOrWhiteSpace(pet.Nome) || string.IsNullOrWhiteSpace(pet.Especie))
-            return BadRequest(new { message = "O Nome e a Espécie do Pet são obrigatórios." }); 
-
-        _context.Pets.Add(pet);
-        await _context.SaveChangesAsync();
-
-        return CreatedAtAction(nameof(GetPetById), new { id = pet.Id }, pet);
-    }
-
-    
-    
-    // PUT 
-    
-    [HttpPut("{id}")]
-    [SwaggerOperation(
-        Summary = "Atualiza os dados de um pet",
-        Description = "Altera as informações de um pet existente. O ID informado na URL deve ser igual ao ID no corpo da requisição."
-    )]
-    public async Task<IActionResult> PutPet(int id, [FromBody] Pet petAtualizado)
-    {
-        if (id != petAtualizado.Id)
-            return BadRequest(new { message = "O ID da URL não confere com o ID do corpo da requisição." }); 
-
-        var petExistente = await _context.Pets.FindAsync(id);
-        
-        if (petExistente == null)
-            return NotFound(new { message = "Pet não encontrado para atualização." }); 
-
-        petExistente.IdTutor = petAtualizado.IdTutor;
-        petExistente.Nome = petAtualizado.Nome;
-        petExistente.Especie = petAtualizado.Especie;
-        petExistente.Cor = petAtualizado.Cor;
-        petExistente.Idade = petAtualizado.Idade;
-        petExistente.Peso = petAtualizado.Peso;
-
-        _context.Entry(petExistente).State = EntityState.Modified;
-        await _context.SaveChangesAsync();
-
-        return NoContent(); 
-    }
-    
-    
-    // DELETE 
-  
-    [HttpDelete("{id}")]
-    [SwaggerOperation(
-        Summary = "Exclui um pet",
-        Description = "Remove permanentemente um pet do banco de dados com base no ID informado."
-    )]
+    [Authorize(Roles = Papeis.Clinica)]
+    [HttpDelete("{id:int}", Name = "DeletePet")]
+    [SwaggerOperation(Summary = "Exclui um pet", Description = "Remove um pet. A exclusão é recusada quando existem consultas vinculadas. Roles: Admin e Veterinario.")]
     public async Task<IActionResult> DeletePet(int id)
     {
-        var pet = await _context.Pets.FindAsync(id);
-        
-        if (pet == null)
-            return NotFound(new { message = "Pet não encontrado para exclusão." }); 
+        await _petService.ExcluirAsync(id);
+        return NoContent();
+    }
 
-        try
-        {
-            _context.Pets.Remove(pet);
-            await _context.SaveChangesAsync();
-            return NoContent(); 
-        }
-        catch (DbUpdateException ex)
-        {
-            // Intercepta o erro ORA-02292 (Foreign Key) do Oracle
-            if (ex.InnerException != null && ex.InnerException.Message.Contains("ORA-02292"))
-            {
-                return Conflict(new { message = "Não é possível excluir este pet, pois ele possui consultas vinculadas no histórico." });
-            }
-            
-            throw; // Repassa qualquer outro erro não previsto
-        }
+    private IReadOnlyList<LinkDto> PetLinks(Pet pet)
+    {
+        return
+        [
+            _hateoas.Link("self", "GetPetById", "GET", new { id = pet.Id }),
+            _hateoas.Link("update", "PutPet", "PUT", new { id = pet.Id }),
+            _hateoas.Link("delete", "DeletePet", "DELETE", new { id = pet.Id }),
+            _hateoas.Link("tutor", "GetTutorById", "GET", new { id = pet.IdTutor }),
+            _hateoas.Link("consultas", "GetConsultasByPet", "GET", new { petId = pet.Id })
+        ];
     }
 }
